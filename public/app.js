@@ -30,6 +30,7 @@ learnjs.template = function(name) {
 }
 
 learnjs.triggerEvent = function(name,args){
+    // view-container要素配下のすべての要素に対して、nameで渡されてきた名前のイベントをトリガーする
     $('.view-container>*').trigger(name,args);
 }
 
@@ -74,9 +75,14 @@ learnjs.problemView = function(data) {
     }
 
     if (problemNumber < learnjs.problems.length) {
+        // skipボタンの定義
         var buttonItem = learnjs.template('skip-btn');
         buttonItem.find('a').attr('href','#problem-' + (problemNumber + 1));
+
+        // nav-listクラスの要素にbuttonItemを追加
         $('.nav-list').append(buttonItem);
+
+        // removingViewという名前のカスタムイベントをバインドしている。その処理の中身はbuttonItem.removeという意味
         view.bind('removingView', function(){
             buttonItem.remove();
         });
@@ -99,6 +105,7 @@ learnjs.showView = function(hash) {
     var hashParts = hash.split('-');
     var viewFn = routes[hashParts[0]];
     if (viewFn){
+        // view遷移の前に、removingViewのイベントをトリガーする
         learnjs.triggerEvent('removingView',[]);
         $('.view-container').empty().append(viewFn(hashParts[1]));        
     }
