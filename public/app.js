@@ -57,6 +57,80 @@ learnjs.addProfileLink = function (profile) {
     $('.signin-bar').prepend(link);
 }
 
+// DynamoDBへのリクエストを送信する汎用リクエスト関数
+learnjs.sendDbRequest = function(req, retry) {
+    var promise = new $.Deferred();
+    req.on('error', function(error) {
+        if (error.code === "CredentialError") {
+            learnjs.identity.then(function(identity) {
+                // refreshに成功した場合はリトライ。失敗した場合はpromiseをrejectする。
+                return identity.refresh().then(function() {
+                    return retry();
+                }, function() {
+                    promise.reject(resp);
+                });
+            });
+        } else {
+            promise.reject(error);
+        }
+    });
+    req.on('success', function(resp) {
+        promise.resolve(resp.data);
+    });
+    req.send();
+    return promise;
+}
+
+// 入力した回答をDynamoDBに保存する
+learnjs.saveAnswer = function(problemId, answer) {
+    return learnjs.identity.then(function(identity) {
+        var db = new AWS.DynamoDB.DocumentClient();
+        var item = {
+            TableName: 'learnjs',
+            Item: {
+                userId: identity.id,
+                problemId: problemId,
+                answer: answer
+            }
+        };
+        return learnjs.sendDbRequest(db.put(item), function(){
+            return learnjs.saveAnswer(problemId, answer);
+        })
+    });
+};
+
+// 保存した回答を取得する
+learnjs.fetchAnswer = function(problemId) {
+    return learnjs.identity.then(function(identity) {
+        var db = new AWS.DynamoDB.DocumentClient();
+        var item = {
+            TableName: 'learnjs',
+            Key: {
+                userId: identity.id,
+                problemId: problemId
+            }
+        };
+        return learnjs.sendDbRequest(db.get(item), function() {
+            return learnjs.fetchAnswer(problemId);
+        })
+    });
+};
+
+learnjs.countAnswers = function(problemId) {
+    return learnjs.identity.then(function(identity) {
+        var db = new AWS.DynamoDB.DocumentClient();
+        var params = {
+            TableName: 'learnjs',
+            Select: 'COUNT',
+            FilterExpression: 'problemId = :problemId',
+            ExpressionAttributeValues: {':problemId': problemId}
+        };
+        return learnjs.sendDbRequest(db.scan(params), function() {
+            return learnja.countAnswers(problemId);
+        })
+    });
+}
+
 learnjs.landingView = function () {
     return learnjs.template('landing-view');
 }
@@ -66,10 +140,11 @@ learnjs.problemView = function (data) {
     var view = learnjs.template('problem-view');
     var problemData = learnjs.problems[problemNumber - 1];
     var resultFlash = view.find('.result');
-
+    var answer = view.find('.answer');
+    var count = view.find('.count');
+    
     function checkAnswer() {
-        var answer = view.find('.answer').val();
-        var test = problemData.code.replace('__', answer) + '; problem();';
+        var test = problemData.code.replace('__', answer.val()) + '; problem();';
 
         // evalを使うので、そもそもjavascript構文エラーになるような回答が入力されるとエラーになる
         return eval(test);
@@ -79,6 +154,7 @@ learnjs.problemView = function (data) {
         if (checkAnswer()) {
             var correctFlash = learnjs.buildCorrectFlash(problemNumber);
             learnjs.flashElement(resultFlash, correctFlash);
+            learnjs.saveAnswer(problemNumber, answer.val());
         } else {
             learnjs.flashElement(resultFlash, 'Incorrect!');
         }
@@ -99,6 +175,18 @@ learnjs.problemView = function (data) {
         });
     }
 
+    learnjs.fetchAnswer(problemNumber).then(function(data) {
+        if(data.Item) {
+            answer.val(data.Item.answer);
+        }
+    });
+
+    // 正解者数を画面に表示する　※本にはなかった処理
+    learnjs.countAnswers(problemNumber).then(function(data) {
+        if(data.Count) {
+            count.text('この問題の正解者数： ' + data.Count + ' 人');
+        }
+    });
 
     view.find('.check-btn').click(checkAnswerClick);
     view.find('.title').text('Problem #' + problemNumber);
